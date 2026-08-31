@@ -30,10 +30,14 @@ public class UrlController {
             @RequestBody ShortenUrlRequest request,
             HttpServletRequest httpRequest) {
 
-        String clientIp = httpRequest.getRemoteAddr();
+        // Prefer X-Forwarded-For (set by our load balancer) so rate limiting
+        // sees the real client IP, not the load balancer's IP.
+        String forwardedFor = httpRequest.getHeader("X-Forwarded-For");
+        String clientIp = (forwardedFor != null && !forwardedFor.isBlank())
+                ? forwardedFor.split(",")[0].trim()
+                : httpRequest.getRemoteAddr();
 
         if (!rateLimitService.isAllowed(clientIp)) {
-
             return ResponseEntity
                     .status(HttpStatus.TOO_MANY_REQUESTS)
                     .body("Rate limit exceeded. Try again later.");
@@ -44,8 +48,12 @@ public class UrlController {
                         request.getOriginalUrl()
                 );
 
-        String shortUrl =
-                "http://localhost:9000/" + shortCode;
+        // Build the short URL dynamically from the actual incoming request,
+        // instead of hardcoding localhost — this way it's correct whether
+        // running locally, on a single Render instance, or behind the LB.
+        String scheme = httpRequest.getScheme();
+        String host = httpRequest.getHeader("Host");
+        String shortUrl = scheme + "://" + host + "/" + shortCode;
 
         return ResponseEntity.ok(
                 new ShortenUrlResponse(shortCode, shortUrl)
